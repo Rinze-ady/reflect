@@ -1,0 +1,2 @@
+IUserDao=com.project.reflectTest1.UserDaoImpl
+IUserService=com.project.reflectTest1.UserServiceImpl

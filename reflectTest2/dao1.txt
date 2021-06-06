@@ -1,0 +1,2 @@
+IManDao=reflectTest2.dao.ManDaoImpl.java
+IManService=project
