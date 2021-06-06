@@ -1,0 +1,225 @@
+在学习了反射之后，知道了反射机制的强大，可以做很多事情。
+可以利用反射实现动态语言的部分特征；可以利用反射获取类的结构信息，动态调用属性和方法等等。
+因此，本文通过利用反射对JDBC的增删改查的封装加深对反射机制的了解。
+
+1.反射的一些常用方法：
+1.1、获取Class的实例(三种)：
+
+        - Class c = 类名.class
+   　　　- Class c = Class.forName("类的全限定类名");
+　   　　- Class c = 对象.getClass();
+
+1.2、获取对象的类名
+
+     　- String className = c.getName();　　　　　　//获取全限定类名
+　　　　- String className = c.getSimpleName();　　　//获取简单类名
+
+1.3、获取Field(四个方法)：
+
+       - Field field = c.getField("属性名");　　　　 //该方法只能通过属性名获取public的属性
+　　　　- Field[] field = c.getFields();　　　　　　　//获取所有的public属性数组
+　　　　- Field field = c.getDeclaredField("属性名"); //获取类的属性，包括protected/private
+    
+1.4、获取Field的信息
+
+       - String name = field.getName();　　//获取属性名
+　　　　- Class<?> type = field.getType();　　//获取属性的类型
+　　　　- Object value = field.get(obj);　　　　//获取obj对象的field属性的值
+　　　　- field.set(obj,Object value);　　　　//给obj对象的field属性赋值value
+
+1.5、设置可访问性
+
+        - setAccessible(true);　　//可以用在被访问修饰符修饰的地方，
+                         //默认为false只能对public修饰的操作，设置true可对private修饰的操作
+
+2.　对增删改查的封装，只需要把一个对象当做参数转入方法即可
+2.1、插入
+
+　/**
+     * 类名对应表，属性对应字段
+     * @param obj　　传入的对象
+     * @return
+     */
+    public static boolean insert(Object obj) {
+        boolean flag = false;
+        Class<?> c = obj.getClass();        //获取obj的Class
+
+        //利用StringBuffer进行插入SQL语句的构造
+        //通过反射获取类名映射表名
+        StringBuffer sb1 = new StringBuffer("insert into "+ c.getSimpleName() +"(");
+        StringBuffer sb2 = new StringBuffer(" values(");
+
+        Field[] field = c.getDeclaredFields();        //通过反射获取对象的属性数组
+        for(int i = 0; i < field.length; i++) {        //遍历属性构造SQL语句
+
+            if(i != field.length-1) {
+                sb1.append(field[i].getName()).append(",");
+                sb2.append("?,");
+            }else {
+                sb1.append(field[i].getName()).append(")");
+                sb2.append("?);");
+            }
+        }
+        String sql = sb1.append(sb2).toString();
+        //获取数据库连接，进行数据库操作
+        Connection conn = getConnection();
+        PreparedStatement ps = null;
+        try {
+            ps = conn.prepareStatement(sql);
+            for(int i = 0; i < field.length; i++) {    
+                field[i].setAccessible(true);        //设置属性的可访问性，可以访问私有属性
+                try {                                //通过Field的get(Object)方法获取Object对象的属性值
+                    ps.setObject(i+1, field[i].get(obj));    //对预编译的SQL语句中的？进行赋值
+                } catch (IllegalArgumentException e) {
+                    e.printStackTrace();
+                } catch (IllegalAccessException e) {
+                    e.printStackTrace();
+                }
+            }
+            System.out.println(ps);        //返回执行的SQL语句
+            flag = ps.execute();        //执行SQL
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }finally {    
+            close(ps);
+            close(conn);    
+        }
+        return flag;
+    }
+
+　2.2、删除
+　
+
+　/**
+     * 通过主键(默认第一个属性)删除对象
+     * @param obj
+     * @return
+     */
+    public static boolean delete(Object obj) {
+        boolean flag = false;
+        Class<?> c = obj.getClass();        //获取obj的Class
+        //构造删除的SQL语句
+        StringBuffer sb = new StringBuffer("delete from ");
+        sb.append(c.getSimpleName()).append(" where ");
+        //获取对象属性数组
+        Field[] field = c.getDeclaredFields();
+        //设置第一个属性的可访问性
+        field[0].setAccessible(true);
+        //获取第一个属性的属性名构造删除sql
+        sb.append(field[0].getName()).append("=?");
+        String sql = sb.toString();
+        Connection conn = getConnection();
+        PreparedStatement ps = null;
+        try {
+            ps = conn.prepareStatement(sql);
+            ps.setObject(1, field[0].get(obj));    
+            System.out.println(ps);
+            flag = ps.execute();
+        } catch (SQLException e) {
+            e.printStackTrace();
+        } catch (IllegalArgumentException e) {
+            e.printStackTrace();
+        } catch (IllegalAccessException e) {
+            e.printStackTrace();
+        }finally {    
+            close(ps);
+            close(conn);    
+        }
+        return flag;
+    }
+
+
+　2.3、修改
+　
+
+/**
+     * 模拟jdbc的更新操作，默认第一个属性为主键
+     * @param obj
+     * @return
+     */
+    public static boolean update(Object obj) {
+        boolean flag = false;
+        Class<?> c = obj.getClass();
+        StringBuffer sb = new StringBuffer("update "+ c.getSimpleName() +" set ");
+
+        Field[] field = c.getDeclaredFields();
+        for(int i = 1; i < field.length; i++) {            
+            if(i != field.length-1) {
+                sb.append(field[i].getName()).append("=?,");
+            }else {
+                sb.append(field[i].getName()).append("=? where ");
+            }
+        }
+        sb.append(field[0].getName() + "=?");
+        String sql = sb.toString();
+
+        Connection conn = getConnection();
+        PreparedStatement ps = null;
+        try {
+            ps = conn.prepareStatement(sql);
+            for(int i = 1; i < field.length; i++) {
+                field[i].setAccessible(true);
+                ps.setObject(i, field[i].get(obj));
+            }
+            field[0].setAccessible(true);
+            ps.setObject(field.length, field[0].get(obj));
+            System.out.println(ps);
+            flag = ps.execute();
+        } catch (SQLException e) {
+            e.printStackTrace();
+        } catch (IllegalArgumentException e) {
+            e.printStackTrace();
+        } catch (IllegalAccessException e) {
+            e.printStackTrace();
+        }finally {    
+            close(ps);
+            close(conn);    
+        }
+        return flag;
+    }
+
+
+　2.4、查询，查询操作不需要传入一个对象，只需要一个类的Class就可以
+　
+
+/**
+     * 模拟框架，通过对象的Class获取对应表中的所有记录
+     * @param obj
+     * @return
+     */
+    public static <T> List<T> selectAll(Class<T> c) {
+        String sql = "select * from "+ c.getSimpleName();    //通过反射获取类名对应表名构造SQL语句
+        List<T> list = new ArrayList<T>();                    //存储查询结果
+        Field[] field = c.getDeclaredFields();                //通过反射获取所有属性
+        Connection conn = getConnection();
+        PreparedStatement ps = null;
+        ResultSet rs = null;
+        try {
+            ps = conn.prepareStatement(sql);            
+            System.out.println(ps);
+            rs = ps.executeQuery();                    //返回结果集
+            while(rs.next()) {
+                T obj = c.newInstance();            //通过反射构造一个T类型的实例
+                for(int i = 0; i < field.length; i++) {        //
+
+                    field[i].setAccessible(true);            //设置属性的可访问性(可以访问私有属性)
+                    field[i].set(obj, rs.getObject(field[i].getName()));    //通过属性名获取结果集中的值赋值到实例对象中
+                }
+                list.add(obj);            //将实例对象添加到list集合
+            }
+        } catch (SQLException e) {
+            e.printStackTrace();
+        } catch (InstantiationException e) {
+            e.printStackTrace();
+        } catch (IllegalAccessException e) {
+            e.printStackTrace();
+        }finally {    
+            close(rs);
+            close(ps);
+            close(conn);    
+        }
+        return list;
+    }
+————————————————
+版权声明：本文为CSDN博主「Ryam」的原创文章，遵循CC 4.0 BY-SA版权协议，转载请附上原文出处链接及本声明。
+原文链接：https://blog.csdn.net/madefromme/article/details/78546118
